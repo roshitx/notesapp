@@ -1,27 +1,37 @@
-/* eslint-disable import/no-extraneous-dependencies */
 const autoBind = require('auto-bind');
 const ClientError = require('../../exceptions/ClientError');
-/* eslint-disable no-underscore-dangle */
-class NotesHandler {
-  constructor(service, validator) {
-    this._service = service;
+
+class AuthenticationsHandler {
+  constructor(authenticationsService, usersService, tokenManager, validator) {
+    this._authenticationsService = authenticationsService;
+    this._usersService = usersService;
+    this._tokenManager = tokenManager;
     this._validator = validator;
 
     autoBind(this);
   }
 
-  async postNoteHandler(request, h) {
+  async postAuthenticationHandler(request, h) {
     try {
-      this._validator.validateNotePayload(request.payload);
-      const { title = 'untitled', body, tags } = request.payload;
+      this._validator.validatePostAuthenticationPayload(request.payload);
 
-      const noteId = await this._service.addNote({ title, body, tags });
+      const { username, password } = request.payload;
+      const id = await this._usersService.verifyUserCredential(
+        username,
+        password,
+      );
+
+      const accessToken = this._tokenManager.generateAccessToken({ id });
+      const refreshToken = this._tokenManager.generateRefreshToken({ id });
+
+      await this._authenticationsService.addRefreshToken(refreshToken);
 
       const response = h.response({
         status: 'success',
-        message: 'Catatan berhasil ditambahkan',
+        message: 'Authentication berhasil ditambahkan',
         data: {
-          noteId,
+          accessToken,
+          refreshToken,
         },
       });
       response.code(201);
@@ -47,24 +57,20 @@ class NotesHandler {
     }
   }
 
-  async getNotesHandler() {
-    const notes = await this._service.getNotes();
-    return {
-      status: 'success',
-      data: {
-        notes,
-      },
-    };
-  }
-
-  async getNoteByIdHandler(request, h) {
+  async putAuthenticationHandler(request, h) {
     try {
-      const { id } = request.params;
-      const note = await this._service.getNoteById(id);
+      this._validator.validatePutAuthenticationPayload(request.payload);
+
+      const { refreshToken } = request.payload;
+      await this._authenticationsService.verifyRefreshToken(refreshToken);
+      const { id } = this._tokenManager.verifyRefreshToken(refreshToken);
+
+      const accessToken = this._tokenManager.generateAccessToken({ id });
       return {
         status: 'success',
+        message: 'Access Token berhasil diperbarui',
         data: {
-          note,
+          accessToken,
         },
       };
     } catch (error) {
@@ -88,47 +94,17 @@ class NotesHandler {
     }
   }
 
-  async putNoteByIdHandler(request, h) {
+  async deleteAuthenticationHandler(request, h) {
     try {
-      this._validator.validateNotePayload(request.payload);
-      const { title, body, tags } = request.payload;
-      const { id } = request.params;
+      this._validator.validateDeleteAuthenticationPayload(request.payload);
 
-      await this._service.editNoteById(id, { title, body, tags });
+      const { refreshToken } = request.payload;
+      await this._authenticationsService.verifyRefreshToken(refreshToken);
+      await this._authenticationsService.deleteRefreshToken(refreshToken);
 
       return {
         status: 'success',
-        message: 'Catatan berhasil diperbarui',
-      };
-    } catch (error) {
-      if (error instanceof ClientError) {
-        const response = h.response({
-          status: 'fail',
-          message: error.message,
-        });
-        response.code(error.statusCode);
-        return response;
-      }
-
-      // Server ERROR!
-      const response = h.response({
-        status: 'error',
-        message: 'Maaf, terjadi kegagalan pada server kami.',
-      });
-      response.code(500);
-      console.error(error);
-      return response;
-    }
-  }
-
-  async deleteNoteByIdHandler(request, h) {
-    try {
-      const { id } = request.params;
-      await this._service.deleteNoteById(id);
-
-      return {
-        status: 'success',
-        message: 'Catatan berhasil dihapus',
+        message: 'Refresh token berhasil dihapus',
       };
     } catch (error) {
       if (error instanceof ClientError) {
@@ -152,4 +128,4 @@ class NotesHandler {
   }
 }
 
-module.exports = NotesHandler;
+module.exports = AuthenticationsHandler;
